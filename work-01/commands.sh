@@ -56,3 +56,21 @@ yc compute instance list
 export VM_IP=$(yc compute instance get "$PREFIX-web-1" --format json \
   | jq -r '.network_interfaces[0].primary_v4_address.one_to_one_nat.address')
 ssh yc-user@"$VM_IP"   # далее nginx и замена текста вручную, как в п. 1.2–1.3
+
+# ---------- 5. Сведения о ресурсах ----------
+yc compute instance list
+yc compute instance list --format json
+yc compute instance list --format json \
+  | jq -r '.[] | "\(.name)\t\(.status)\t\(.network_interfaces[0].primary_v4_address.one_to_one_nat.address // "нет")"'
+yc compute instance list --format json | jq -r ".[] | select(.name | startswith(\"$PREFIX\")) | .name"
+# остановленные машины (прерываемые могут внезапно остановиться)
+yc compute instance list --format json | jq -r '.[] | select(.status != "RUNNING") | .name'
+
+# ---------- 6. Уборка (сначала то, что использует сеть) ----------
+yc compute instance delete "$PREFIX-web-1"
+yc compute instance delete "$PREFIX-web-manual"
+yc vpc subnet delete "$PREFIX-subnet"
+yc vpc network delete "$PREFIX-net"
+yc compute instance list
+yc vpc network list
+yc compute disk list
