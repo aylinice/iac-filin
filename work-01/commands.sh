@@ -55,7 +55,16 @@ yc compute instance create \
 yc compute instance list
 export VM_IP=$(yc compute instance get "$PREFIX-web-1" --format json \
   | jq -r '.network_interfaces[0].primary_v4_address.one_to_one_nat.address')
-ssh yc-user@"$VM_IP"   # далее nginx и замена текста вручную, как в п. 1.2–1.3
+ssh yc-user@"$VM_IP"   # далее nginx и замена текста вручную, как в отчёте п. 2.3–2.4
+
+# первое подключение: Connection timed out — группа безопасности новой сети
+# не пускает входящие снаружи; открываем SSH и HTTP и подключаемся снова
+SG_ID=$(yc vpc network get "$PREFIX-net" --format json | jq -r .default_security_group_id)
+yc vpc security-group get "$SG_ID"
+yc vpc security-group update-rules "$SG_ID" \
+  --add-rule "direction=ingress,port=22,protocol=tcp,v4-cidrs=[0.0.0.0/0]" \
+  --add-rule "direction=ingress,port=80,protocol=tcp,v4-cidrs=[0.0.0.0/0]"
+ssh yc-user@"$VM_IP"   # далее nginx и замена текста, как на web-manual
 
 # ---------- 5. Сведения о ресурсах ----------
 yc compute instance list
