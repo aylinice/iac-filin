@@ -83,3 +83,43 @@ yc vpc network delete "$PREFIX-net"
 yc compute instance list
 yc vpc network list
 yc compute disk list
+
+# ---------- 7. Самостоятельная часть ----------
+yc compute image list --folder-id standard-images --format json \
+  | jq -r '.[].family' | sort -u | grep -Ei 'debian|ubuntu'
+yc compute image get-latest-from-family ubuntu-2204-lts --folder-id standard-images \
+  --format json | jq '{name, family, min_disk_size}'
+
+./work-01/create.sh
+export APP1_IP=$(yc compute instance get filin-02-app-1 --format json | jq -r '.network_interfaces[0].primary_v4_address.one_to_one_nat.address')
+export APP2_IP=$(yc compute instance get filin-02-app-2 --format json | jq -r '.network_interfaces[0].primary_v4_address.one_to_one_nat.address')
+
+# публичный адрес одной из машин оказался недоступен из российских сетей
+# (изнутри облака отвечал) — машину пересоздали, чтобы получить новый адрес
+yc compute instance delete filin-02-app-2
+SG_ID=$(yc vpc security-group get --name filin-02-sg --format json | jq -r .id)
+yc compute instance create \
+  --name filin-02-app-2 --hostname filin-02-app-2 --zone ru-central1-b \
+  --platform standard-v3 --cores=2 --core-fraction=20 --memory=2 --preemptible \
+  --create-boot-disk image-folder-id=standard-images,image-family=ubuntu-2204-lts,type=network-hdd,size=20 \
+  --network-interface subnet-name=filin-02-subnet,nat-ip-version=ipv4,security-group-ids="$SG_ID" \
+  --ssh-key ~/.ssh/id_ed25519.pub --labels created-by=script
+
+# nginx на порту 8006 и персонализация страницы — на каждой машине по SSH
+for ip in $APP1_IP $APP2_IP; do
+  ssh -o ConnectTimeout=20 -o StrictHostKeyChecking=accept-new yc-user@"$ip" 'bash -s' << 'EOS'
+sudo apt-get update -qq
+sudo apt-get install -y -qq nginx >/dev/null
+sudo sed -i 's/listen 80 default_server;/listen 8006 default_server;/; s/listen \[::\]:80 default_server;/listen [::]:8006 default_server;/' /etc/nginx/sites-available/default
+sudo nginx -t && sudo systemctl reload nginx
+sudo sed -i "s|Welcome to nginx!|cloudlab on $(hostname)|g" /var/www/html/index.nginx-debian.html
+curl -s localhost:8006 | grep -o "cloudlab on [a-z0-9-]*" | head -1
+EOS
+done
+
+# проверка снаружи
+curl -s -m 10 http://$APP1_IP:8006 | grep -o "cloudlab on [a-z0-9-]*" | head -1
+curl -s -m 10 http://$APP2_IP:8006 | grep -o "cloudlab on [a-z0-9-]*" | head -1
+curl -s -m 5 http://$APP1_IP:80 >/dev/null && echo "порт 80 открыт" || echo "порт 80 снаружи закрыт"
+
+./work-01/destroy.sh
